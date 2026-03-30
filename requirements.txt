@@ -1,5 +1,5 @@
 streamlit
 pandas
-feedparser
 selenium
+webdriver-manager
 openpyxl
