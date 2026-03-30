@@ -1,81 +1,59 @@
-import streamlit as st
-import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
+import io
 import time
 import re
-import io
 import random
+import urllib.parse
+import pandas as pd
+import requests
+import streamlit as st
+from bs4 import BeautifulSoup
 from openpyxl.styles import Font, Alignment
 
 # --- 基礎設定 ---
-st.set_page_config(page_title="犯罪新聞精準提取 (原始碼修正版)", layout="wide")
+st.set_page_config(page_title="犯罪新聞精準提取 (穩定版)", layout="wide")
 
 def clean_text(text):
     if not text: return ""
     text = re.sub(r'<[^>]*>', '', text)
     return text.replace('\n', ' ').strip()
 
-def crawl_raw_precise(target_date, exclude_list, buffer_limit=30, final_limit=10):
-    KEYWORDS = [
-        "洗錢"
-    ]
-
-    # 多組 User-Agent 輪替，降低被封鎖機率
-    ua_list = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    ]
-
+def crawl_task(target_date, exclude_list, final_limit=10):
+    KEYWORDS = ["洗錢"]
+    
     all_results = []
     seen_titles = set()
     progress_bar = st.progress(0)
-    status_text = st.empty()
+    
+    # 模擬真實瀏覽器標頭
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.google.com/"
+    }
 
     for idx, kw in enumerate(KEYWORDS):
         try:
-            status_text.text(f"📡 正在抓取：{kw} ({idx+1}/{len(KEYWORDS)})")
-            
-            # 使用手動搜尋 URL 結構
+            # 構建搜尋網址 (與手動搜尋完全一致的參數)
             query = f"{kw} after:{target_date}-01 before:{target_date}-31"
-            encoded_query = urllib.parse.quote(query)
-            url = f"https://www.google.com/search?q={encoded_query}&tbm=nws&hl=zh-TW&gl=tw"
+            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&tbm=nws&hl=zh-TW&gl=tw"
             
-            headers = {
-                "User-Agent": random.choice(ua_list),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Referer": "https://www.google.com/"
-            }
-
             response = requests.get(url, headers=headers, timeout=15)
-            
             if response.status_code != 200:
-                st.warning(f"⚠️ {kw} 請求受阻 (HTTP {response.status_code})")
                 continue
 
             soup = BeautifulSoup(response.text, "html.parser")
-            # 鎖定手動搜尋對齊標籤 SoaBEf
+            # 鎖定網頁版關鍵標籤 SoaBEf
             items = soup.select("div.SoaBEf")
             
-            count_for_kw = 0
+            count = 0
             for item in items:
-                if count_for_kw >= buffer_limit: break
+                if count >= final_limit: break
                 
                 try:
-                    title_elem = item.select_one("div[role='heading']")
-                    link_elem = item.select_one("a")
-                    source_elem = item.select_one("div.MgUUmf")
-                    snippet_elem = item.select_one("div.VwiC3b")
-                    
-                    if not title_elem or not link_elem: continue
-                    
-                    title = title_elem.text
-                    link = link_elem["href"]
-                    source = source_elem.text if source_elem else "媒體"
-                    snippet = snippet_elem.text if snippet_elem else ""
+                    title = item.select_one("div[role='heading']").text
+                    link = item.select_one("a")["href"]
+                    source = item.select_one("div.MgUUmf").text
+                    snippet = item.select_one("div.VwiC3b").text if item.select_one("div.VwiC3b") else ""
                     
                     if title in seen_titles: continue
                     if any(ex in source for ex in exclude_list if ex): continue
@@ -88,34 +66,31 @@ def crawl_raw_precise(target_date, exclude_list, buffer_limit=30, final_limit=10
                         "連結": link
                     })
                     seen_titles.add(title)
-                    count_for_kw += 1
+                    count += 1
                 except:
                     continue
             
             progress_bar.progress((idx + 1) / len(KEYWORDS))
-            time.sleep(random.uniform(1.0, 2.0)) # 隨機延遲
+            time.sleep(random.uniform(1, 2))
             
-        except Exception as e:
-            st.error(f"❌ {kw} 異常：{e}")
+        except:
+            continue
 
-    if all_results:
-        df = pd.DataFrame(all_results)
-        return df.groupby("犯罪類別").head(final_limit).reset_index(drop=True)
-    return pd.DataFrame()
+    return pd.DataFrame(all_results)
 
 # --- UI ---
-st.title("⚖️ 犯罪新聞精準對位工具 (30取10)")
+st.title("⚖️ 犯罪新聞數據全自動提取")
 
 with st.sidebar:
-    target_month = st.text_input("📅 搜尋月份 (YYYY-MM)", "2025-01")
+    target_month = st.text_input("📅 月份 (YYYY-MM)", "2025-01")
     ex_input = st.text_area("🚫 排除媒體")
     ex_list = [x.strip() for x in ex_input.replace('，', ',').split(',') if x.strip()]
 
-if st.button("🚀 開始全量同步任務"):
-    df = crawl_raw_precise(target_month, ex_list)
+if st.button("🚀 開始同步提取"):
+    df = crawl_task(target_month, ex_list)
     
     if not df.empty:
-        st.success(f"✅ 完成！獲取 {len(df)} 筆。")
+        st.success(f"✅ 完成！獲取 {len(df)} 筆與手動搜尋對位的資料。")
         st.dataframe(df)
 
         # --- Excel 格式鎖死 (A9, B14, 行高 16, 字體 12) ---
@@ -125,9 +100,9 @@ if st.button("🚀 開始全量同步任務"):
             ws = writer.sheets['Sheet1']
             font_style = Font(name='Microsoft JhengHei', size=12)
             
-            # A 欄寬 9, B 欄寬 14
-            ws.column_dimensions['A'].width = 9
-            ws.column_dimensions['B'].width = 14
+            # 欄寬設定
+            ws.column_dimensions['A'].width = 9   # A 欄寬 9
+            ws.column_dimensions['B'].width = 14  # B 欄寬 14
             ws.column_dimensions['C'].width = 40
             ws.column_dimensions['D'].width = 60
             ws.column_dimensions['E'].width = 30
@@ -138,6 +113,6 @@ if st.button("🚀 開始全量同步任務"):
                     cell.font = font_style
                     cell.alignment = Alignment(vertical='center', wrap_text=False)
 
-        st.download_button("📥 下載 Excel", output.getvalue(), f"CrimeData_{target_month}.xlsx")
+        st.download_button("📥 下載對位 Excel", output.getvalue(), f"CrimeData_{target_month}.xlsx")
     else:
-        st.error("提取失敗：雲端 IP 依然被 Google 阻擋。")
+        st.error("查無資料，可能是雲端 IP 被 Google 阻擋，請重新整理頁面再試一次。")
