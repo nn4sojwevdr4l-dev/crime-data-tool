@@ -15,10 +15,7 @@ def clean_html(text):
 
 def crawl_data(target_date, include_list, exclude_list, buffer_limit=30, final_limit=10):
     KEYWORDS = [
-        "販毒", "吸金", "詐欺", "詐貸", "走私", "逃稅", "犯罪集團", "內線交易", 
-        "違反證券交易", "侵占", "背信", "地下通匯", "賭博", "博弈", "貪污", 
-        "行賄", "仿冒", "盜版", "侵害營業秘密", "第三方洗錢", "洗錢", 
-        "槍砲彈藥刀械", "贓物", "竊盜", "環保犯罪", "偽造", "綁架", "拘禁", "妨害自由"
+        "吸金"
     ]
     
     all_results = []
