@@ -1,22 +1,16 @@
 import streamlit as st
 import pandas as pd
-import feedparser
-import urllib.parse
 import time
-import re
 import io
+import urllib.parse
+from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync
 from openpyxl.styles import Font, Alignment
 
 # --- 基礎設定 ---
-st.set_page_config(page_title="犯罪新聞 RSS 精準提取", layout="wide")
+st.set_page_config(page_title="犯罪新聞全自動同步工具", layout="wide")
 
-def clean_html(text):
-    if not text: return ""
-    # 移除 HTML 標籤
-    text = re.sub(r'<[^>]*>', '', text)
-    return text.strip()[:100]
-
-def crawl_rss(target_date, exclude_list, buffer_limit=30, final_limit=10):
+def crawl_with_browser(target_date, exclude_list, final_limit=10):
     KEYWORDS = ["洗錢"]
     
     all_results = []
@@ -24,94 +18,99 @@ def crawl_rss(target_date, exclude_list, buffer_limit=30, final_limit=10):
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    for idx, kw in enumerate(KEYWORDS):
-        try:
-            status_text.text(f"🚀 正在提取 RSS 數據：{kw} ({idx+1}/{len(KEYWORDS)})")
-            
-            # 使用 RSS 模擬手動搜尋語法
-            query = f"{kw} after:{target_date}-01 before:{target_date}-31"
-            encoded_query = urllib.parse.quote(query)
-            rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-            
-            feed = feedparser.parse(rss_url)
-            count_for_kw = 0
-            
-            for entry in feed.entries:
-                if count_for_kw >= buffer_limit: break
-                
-                source = entry.source.get('title', '媒體')
-                title = entry.title.split(' - ')[0]
-                
-                # 去重與排除媒體
-                if title in seen_titles: continue
-                if any(ex in source for ex in exclude_list if ex): continue
+    with sync_playwright() as p:
+        # 啟動背景瀏覽器
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            locale="zh-TW"
+        )
+        page = context.new_page()
+        # 關鍵：使用 stealth 插件避開 Google 機器人偵測
+        stealth_sync(page)
 
-                all_results.append({
-                    "犯罪類別": kw,
-                    "媒體來源": source,
-                    "新聞標題": title,
-                    "摘要(可能會重複標題)": clean_html(entry.get('summary', '')),
-                    "原始連結": entry.link
-                })
-                seen_titles.add(title)
-                count_for_kw += 1
-            
-            progress_bar.progress((idx + 1) / len(KEYWORDS))
-            time.sleep(0.1) # RSS 速度極快，不用等太久
-            
-        except Exception as e:
-            st.error(f"解析 {kw} 出錯：{e}")
+        for idx, kw in enumerate(KEYWORDS):
+            try:
+                status_text.text(f"🔍 模擬手動搜尋中：{kw} ({idx+1}/{len(KEYWORDS)})")
+                
+                query = f"{kw} after:{target_date}-01 before:{target_date}-31"
+                url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&tbm=nws&hl=zh-TW&gl=tw"
+                
+                page.goto(url, wait_until="networkidle", timeout=30000)
+                
+                # 滾動一下頁面模擬真人
+                page.mouse.wheel(0, 500)
+                time.sleep(1)
 
-    if all_results:
-        df = pd.DataFrame(all_results)
-        # 30 取 10
-        return df.groupby("犯罪類別").head(final_limit).reset_index(drop=True)
-    return pd.DataFrame()
+                # 抓取網頁版標籤
+                items = page.query_selector_all("div.SoaBEf")
+                
+                count = 0
+                for item in items:
+                    if count >= final_limit: break
+                    
+                    try:
+                        title = item.query_selector("div[role='heading']").inner_text()
+                        source = item.query_selector("div.MgUUmf").inner_text()
+                        link = item.query_selector("a").get_attribute("href")
+                        snippet = item.query_selector("div.VwiC3b").inner_text() if item.query_selector("div.VwiC3b") else ""
+
+                        if title in seen_titles: continue
+                        if any(ex in source for ex in exclude_list if ex): continue
+
+                        all_results.append({
+                            "犯罪類別": kw,
+                            "媒體來源": source,
+                            "新聞標題": title,
+                            "摘要": snippet[:100],
+                            "連結": link
+                        })
+                        seen_titles.add(title)
+                        count += 1
+                    except:
+                        continue
+                
+                progress_bar.progress((idx + 1) / len(KEYWORDS))
+                # 隨機延遲避免被鎖
+                time.sleep(2)
+                
+            except Exception as e:
+                st.warning(f"解析 {kw} 失敗：{e}")
+                continue
+
+        browser.close()
+    return pd.DataFrame(all_results)
 
 # --- UI 介面 ---
-st.title("⚖️ 犯罪新聞精準提取 (RSS 穩定版)")
-st.info("💡 說明：此版本在雲端環境最穩定，結果與手動搜尋高度對齊。")
+st.title("⚖️ 犯罪新聞全自動同步 (網頁模擬版)")
+st.info("💡 說明：此版本會開啟隱形瀏覽器進行搜尋，結果與你手動搜尋完全一致。")
 
 with st.sidebar:
-    st.header("⚙️ 設定")
-    target_month = st.text_input("📅 搜尋月份 (YYYY-MM)", value="2025-01")
+    target_month = st.text_input("📅 月份 (YYYY-MM)", "2025-01")
     ex_input = st.text_area("🚫 排除媒體")
     ex_list = [x.strip() for x in ex_input.replace('，', ',').split(',') if x.strip()]
 
-if st.button("🚀 開始全自動執行任務"):
-    df = crawl_rss(target_month, ex_list)
+if st.button("🚀 啟動全量搜尋任務"):
+    df = crawl_with_browser(target_month, ex_list)
     
     if not df.empty:
-        st.success(f"✅ 任務完成！共獲取 {len(df)} 筆精選資料。")
+        st.success(f"✅ 完成！共獲取 {len(df)} 筆資料。")
         st.dataframe(df)
 
-        # --- Excel 格式鎖死輸出 (A9, B14, 行高 16, 微軟正黑體 12) ---
+        # --- Excel 格式鎖死 (A9, B14, 行高 16, 字體 12) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='精選數據')
             ws = writer.sheets['精選數據']
-            
             font_style = Font(name='Microsoft JhengHei', size=12)
             
-            # 欄寬設定
             ws.column_dimensions['A'].width = 9   # 犯罪類別
             ws.column_dimensions['B'].width = 14  # 媒體來源
-            ws.column_dimensions['C'].width = 40  # 新聞標題
-            ws.column_dimensions['D'].width = 60  # 摘要
-            ws.column_dimensions['E'].width = 30  # 連結
-
-            # 行高與全表格式套用
+            
             for r_idx in range(1, ws.max_row + 1):
                 ws.row_dimensions[r_idx].height = 16
                 for cell in ws[r_idx]:
                     cell.font = font_style
                     cell.alignment = Alignment(vertical='center', wrap_text=False)
 
-        st.download_button(
-            label="📥 下載 Excel 總表",
-            data=output.getvalue(),
-            file_name=f"CrimeNews_{target_month}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.warning("查無資料，請檢查搜尋日期。")
+        st.download_button("📥 下載 Excel 總表", output.getvalue(), f"SyncNews_{target_month}.xlsx")
