@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
+import feedparser
 import urllib.parse
 import time
 import re
@@ -9,27 +8,17 @@ import io
 from openpyxl.styles import Font, Alignment
 
 # --- 基礎設定 ---
-st.set_page_config(page_title="犯罪新聞精準提取工具", layout="wide")
+st.set_page_config(page_title="犯罪新聞 RSS 精準提取", layout="wide")
 
-def clean_text(text):
+def clean_html(text):
     if not text: return ""
+    # 移除 HTML 標籤
     text = re.sub(r'<[^>]*>', '', text)
-    return text.replace('\n', ' ').strip()
+    return text.strip()[:100]
 
-def crawl_precise(target_date, exclude_list, buffer_limit=30, final_limit=10):
-    KEYWORDS = [
-        "洗錢"
-    ]
-
-    # 這是當時測試出最能對齊手動搜尋的 Header
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://www.google.com/",
-        "Cache-Control": "max-age=0"
-    }
-
+def crawl_rss(target_date, exclude_list, buffer_limit=30, final_limit=10):
+    KEYWORDS = ["洗錢"]
+    
     all_results = []
     seen_titles = set()
     progress_bar = st.progress(0)
@@ -37,95 +26,81 @@ def crawl_precise(target_date, exclude_list, buffer_limit=30, final_limit=10):
 
     for idx, kw in enumerate(KEYWORDS):
         try:
-            status_text.text(f"📡 正在精準同步：{kw} ({idx+1}/{len(KEYWORDS)})")
+            status_text.text(f"🚀 正在提取 RSS 數據：{kw} ({idx+1}/{len(KEYWORDS)})")
             
-            # 使用當時最準的 URL 結構：關鍵字 + 月份區間
+            # 使用 RSS 模擬手動搜尋語法
             query = f"{kw} after:{target_date}-01 before:{target_date}-31"
             encoded_query = urllib.parse.quote(query)
-            # tbm=nws 加上 hl/gl 是當時對位成功的關鍵
-            url = f"https://www.google.com/search?q={encoded_query}&tbm=nws&hl=zh-TW&gl=tw"
+            rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
             
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code != 200:
-                st.warning(f"⚠️ {kw} 請求異常，跳過該項。")
-                continue
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            # 當時對位成功的標籤 SoaBEf
-            items = soup.select("div.SoaBEf")
-            
+            feed = feedparser.parse(rss_url)
             count_for_kw = 0
-            for item in items:
+            
+            for entry in feed.entries:
                 if count_for_kw >= buffer_limit: break
                 
-                try:
-                    title = item.select_one("div[role='heading']").text
-                    link = item.select_one("a")["href"]
-                    source = item.select_one("div.MgUUmf").text
-                    # 摘要標籤
-                    snippet = item.select_one("div.VwiC3b").text if item.select_one("div.VwiC3b") else ""
-                    
-                    if title in seen_titles: continue
-                    if any(ex in source for ex in exclude_list if ex): continue
+                source = entry.source.get('title', '媒體')
+                title = entry.title.split(' - ')[0]
+                
+                # 去重與排除媒體
+                if title in seen_titles: continue
+                if any(ex in source for ex in exclude_list if ex): continue
 
-                    all_results.append({
-                        "犯罪類別": kw,
-                        "來源": source,
-                        "標題": title,
-                        "摘要": clean_text(snippet)[:90],
-                        "連結": link
-                    })
-                    seen_titles.add(title)
-                    count_for_kw += 1
-                except:
-                    continue
+                all_results.append({
+                    "犯罪類別": kw,
+                    "媒體來源": source,
+                    "新聞標題": title,
+                    "摘要(可能會重複標題)": clean_html(entry.get('summary', '')),
+                    "原始連結": entry.link
+                })
+                seen_titles.add(title)
+                count_for_kw += 1
             
             progress_bar.progress((idx + 1) / len(KEYWORDS))
-            time.sleep(1.5) # 雲端執行建議維持這個間隔
+            time.sleep(0.1) # RSS 速度極快，不用等太久
             
         except Exception as e:
-            st.error(f"❌ {kw} 發生錯誤: {e}")
+            st.error(f"解析 {kw} 出錯：{e}")
 
     if all_results:
         df = pd.DataFrame(all_results)
         # 30 取 10
-        final_df = df.groupby("犯罪類別").head(final_limit).reset_index(drop=True)
-        return final_df
+        return df.groupby("犯罪類別").head(final_limit).reset_index(drop=True)
     return pd.DataFrame()
 
 # --- UI 介面 ---
-st.title("⚖️ 犯罪新聞精準對位工具 (3/26 修正版)")
+st.title("⚖️ 犯罪新聞精準提取 (RSS 穩定版)")
+st.info("💡 說明：此版本在雲端環境最穩定，結果與手動搜尋高度對齊。")
 
 with st.sidebar:
-    st.header("⚙️ 篩選設定")
+    st.header("⚙️ 設定")
     target_month = st.text_input("📅 搜尋月份 (YYYY-MM)", value="2025-01")
-    ex_input = st.text_area("🚫 排除媒體 (逗號分隔)", placeholder="Yahoo, LINE TODAY")
+    ex_input = st.text_area("🚫 排除媒體")
     ex_list = [x.strip() for x in ex_input.replace('，', ',').split(',') if x.strip()]
 
-if st.button("🚀 開始執行任務"):
-    df = crawl_precise(target_month, ex_list)
+if st.button("🚀 開始全自動執行任務"):
+    df = crawl_rss(target_month, ex_list)
     
     if not df.empty:
-        st.success(f"✅ 完成！共獲取 {len(df)} 筆與手動搜尋一致的資料。")
+        st.success(f"✅ 任務完成！共獲取 {len(df)} 筆精選資料。")
         st.dataframe(df)
 
-        # --- Excel 格式鎖死 (A9, B14, 行高 16, 微軟正黑體 12) ---
+        # --- Excel 格式鎖死輸出 (A9, B14, 行高 16, 微軟正黑體 12) ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='精選數據')
             ws = writer.sheets['精選數據']
             
-            # 設定字體與對齊
             font_style = Font(name='Microsoft JhengHei', size=12)
             
-            # 欄寬鎖死
-            ws.column_dimensions['A'].width = 9
-            ws.column_dimensions['B'].width = 14
-            ws.column_dimensions['C'].width = 40
-            ws.column_dimensions['D'].width = 60
-            ws.column_dimensions['E'].width = 30
+            # 欄寬設定
+            ws.column_dimensions['A'].width = 9   # 犯罪類別
+            ws.column_dimensions['B'].width = 14  # 媒體來源
+            ws.column_dimensions['C'].width = 40  # 新聞標題
+            ws.column_dimensions['D'].width = 60  # 摘要
+            ws.column_dimensions['E'].width = 30  # 連結
 
-            # 行高鎖死與樣式套用
+            # 行高與全表格式套用
             for r_idx in range(1, ws.max_row + 1):
                 ws.row_dimensions[r_idx].height = 16
                 for cell in ws[r_idx]:
@@ -135,8 +110,8 @@ if st.button("🚀 開始執行任務"):
         st.download_button(
             label="📥 下載 Excel 總表",
             data=output.getvalue(),
-            file_name=f"犯罪新聞精選_{target_month}.xlsx",
+            file_name=f"CrimeNews_{target_month}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.error("❌ 提取失敗，請檢查網路環境或 Google 驗證。")
+        st.warning("查無資料，請檢查搜尋日期。")
