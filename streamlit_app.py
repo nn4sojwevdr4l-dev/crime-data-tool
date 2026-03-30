@@ -7,7 +7,7 @@ import re
 import io
 
 # --- 基礎設定 ---
-st.set_page_config(page_title="犯罪數據精選工具 (測試版 V1.1)", layout="wide")
+st.set_page_config(page_title="犯罪新聞爬蟲工具", layout="wide")
 
 def clean_html(text):
     if not text: return ""
@@ -82,7 +82,7 @@ def crawl_data(target_date, include_list, exclude_list, buffer_limit=30, final_l
     return pd.DataFrame()
 
 # --- UI 介面 ---
-st.title("🔍 犯罪數據精選工具 (30取10版)")
+st.title("🔍 犯罪新聞爬蟲工具")
 st.info("運作邏輯：系統會先篩選出最多 30 筆符合條件的新聞，最後精選「前 10 筆」寫入 Excel。")
 
 with st.sidebar:
@@ -91,15 +91,15 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🚫 排除媒體")
-    exclude_input = st.text_area("輸入要排除的媒體（用逗號分隔）", placeholder="例如: Yahoo, LINE TODAY")
+    exclude_input = st.text_area("輸入要排除的媒體（看清楚是用逗號分隔,不要笨）", placeholder="例如: Yahoo, LINE TODAY")
     exclude_list = [x.strip() for x in exclude_input.replace('，', ',').split(',') if x.strip()]
     
     st.subheader("🎯 指定媒體")
-    include_input = st.text_area("只抓取這些媒體（用逗號分隔）", placeholder="例如: 自由時報, 聯合報")
+    include_input = st.text_area("只抓取這些媒體（看清楚是用逗號分隔,不要笨）", placeholder="例如: 自由時報, 聯合報")
     include_list = [x.strip() for x in include_input.replace('，', ',').split(',') if x.strip()]
 
 if st.button("🚀 開始執行精選任務"):
-    with st.spinner('正在從海量新聞中精選數據...'):
+    with st.spinner('正在大海撈針了...'):
         df = crawl_data(target_date, include_list, exclude_list, buffer_limit=30, final_limit=10)
         
         if not df.empty:
