@@ -1,5 +1,5 @@
 streamlit
+playwright
+playwright-stealth
+openpyxl
 pandas
-requests
-beautifulsoup4
-fake-useragent
