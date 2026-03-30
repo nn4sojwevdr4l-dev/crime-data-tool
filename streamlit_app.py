@@ -11,7 +11,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
 # --- 基礎設定 ---
-st.set_page_config(page_title="犯罪數據精選工具 (測試版 V1.1)", layout="wide")
+st.set_page_config(page_title="犯罪新聞爬蟲工具", layout="wide")
 
 def clean_content(text):
     """ 整理新聞內文格式 """
@@ -145,7 +145,7 @@ def crawl_data(target_date, include_list, exclude_list, buffer_limit=30, final_l
     return pd.DataFrame()
 
 # --- UI 介面 ---
-st.title("🔍 犯罪數據精選工具 (深度掃描版)")
+st.title("🔍 犯罪新聞爬蟲工具")
 st.info("運作邏輯：系統會透過 RSS 鎖定名單，並進入新聞頁面提取前 100 字精準摘要。")
 
 with st.sidebar:
@@ -154,14 +154,14 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🚫 排除媒體")
-    exclude_input = st.text_area("輸入要排除的媒體 (逗號分隔)", placeholder="例如: Yahoo, LINE TODAY")
+    exclude_input = st.text_area("輸入要排除的媒體 (要用逗號分隔,不要笨!)", placeholder="例如: Yahoo, LINE TODAY")
     exclude_list = [x.strip() for x in exclude_input.replace('，', ',').split(',') if x.strip()]
     
     st.subheader("🎯 指定媒體")
-    include_input = st.text_area("只抓取這些媒體 (逗號分隔)", placeholder="例如: 自由時報, 聯合報")
+    include_input = st.text_area("只抓取這些媒體 (要用逗號分隔,不要笨!)", placeholder="例如: 自由時報, 聯合報")
     include_list = [x.strip() for x in include_input.replace('，', ',').split(',') if x.strip()]
 
-if st.button("🚀 開始執行深度精選任務"):
+if st.button("🚀 開始執行深度爬蟲任務"):
     with st.spinner('正在精選數據並讀取網頁內容，請稍候...'):
         df = crawl_data(target_date, include_list, exclude_list, buffer_limit=30, final_limit=10)
         
@@ -176,7 +176,7 @@ if st.button("🚀 開始執行深度精選任務"):
             st.download_button(
                 label="📥 下載精選數據總表.xlsx",
                 data=output.getvalue(),
-                file_name=f"犯罪數據深度精選_{target_date}.xlsx",
+                file_name=f"犯罪新聞_{target_date}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
